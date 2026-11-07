@@ -207,6 +207,28 @@ pub async fn run_spoofer(
         mode_filtered_games
     };
 
+    let mode_filtered_games: Vec<SpoofableGame> = if config.exclude_game_ids.is_empty() {
+        mode_filtered_games
+    } else {
+        let blocked: std::collections::HashSet<&str> =
+            config.exclude_game_ids.iter().map(String::as_str).collect();
+        let before_count = mode_filtered_games.len();
+        let filtered: Vec<SpoofableGame> = mode_filtered_games
+            .into_iter()
+            .filter(|g| !blocked.contains(g.id.as_str()))
+            .collect();
+        let skipped = before_count - filtered.len();
+        if skipped > 0 {
+            let message = if is_russian() {
+                format!("Пропуск {} игр из чёрного списка.", skipped)
+            } else {
+                format!("Skipped {} blacklisted games.", skipped)
+            };
+            log_event(&app, "info", &message);
+        }
+        filtered
+    };
+
     let is_farm = !config.farm_game_ids.is_empty();
     let history = load_history();
     let mut pool: Vec<SpoofableGame> = if is_farm {

@@ -67,6 +67,12 @@ export const tauriApi = {
     return invoke('set_language', { language });
   },
 
+  // Tells the backend whether the window's close button should hide it to the tray
+  setCloseToTray: (enabled: boolean): Promise<void> => {
+    if (!isTauriRuntime()) return Promise.resolve();
+    return invoke('set_close_to_tray', { enabled });
+  },
+
   // Opens a GitHub link in the system default browser
   openExternalUrl: async (url: string): Promise<void> => {
     if (isTauriRuntime()) {

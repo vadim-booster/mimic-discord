@@ -2,6 +2,11 @@ import React from 'react';
 import { Cpu, Gamepad2, Settings as SettingsIcon } from 'lucide-react';
 import { useI18n } from '@/i18n/I18nProvider';
 import type { SpooferStatus, SpooferTickEvent, SpooferLogEvent, SpooferConfig } from '@/types/spoofer';
+import { RiskMeter } from '@/components/RiskMeter';
+import { AutoStopSelector } from '@/components/AutoStopSelector';
+import { PresetChips } from '@/components/PresetChips';
+import { estimateRisk } from '@/lib/risk';
+import type { Preset } from '@/lib/presets';
 
 interface DashboardViewProps {
   status: SpooferStatus;
@@ -16,6 +21,10 @@ interface DashboardViewProps {
   config: SpooferConfig;
   onConfigChange: (updater: (prev: SpooferConfig) => SpooferConfig) => void;
   onOpenSettings: () => void;
+  autoStopMinutes: number;
+  onAutoStopChange: (minutes: number) => void;
+  presets: Preset[];
+  onApplyPreset: (preset: Preset) => void;
   onStart: () => void;
   onPause: () => void;
   onResume: () => void;
@@ -35,6 +44,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   config,
   onConfigChange,
   onOpenSettings,
+  autoStopMinutes,
+  onAutoStopChange,
+  presets,
+  onApplyPreset,
   onStart,
   onPause,
   onResume,
@@ -75,6 +88,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     : (config.skip_previously_spoofed ? idleGamesRemaining : currentModeTotal);
   const currentDone = tickData.current_index;
   const progressPercent = totalTarget > 0 ? Math.min(100, Math.round((currentDone / totalTarget) * 100)) : 0;
+
+  // While a run is going the risk follows the games that are still left, so it drops as they run out.
+  const risk = React.useMemo(
+    () =>
+      estimateRisk({
+        batchSize: config.batch_size,
+        holdSecs: config.hold_duration_secs,
+        totalGames:
+          (isRunning || isPaused) && tickData.total_games > 0
+            ? Math.max(0, tickData.total_games - tickData.current_index)
+            : idleGamesRemaining,
+        cooldownEnabled: config.cooldown_enabled,
+      }),
+    [
+      config.batch_size,
+      config.hold_duration_secs,
+      config.cooldown_enabled,
+      isRunning,
+      isPaused,
+      tickData.total_games,
+      tickData.current_index,
+      idleGamesRemaining,
+    ]
+  );
 
   const formatEta = (seconds: number): string => {
     if (isNaN(seconds) || seconds <= 0 || !isFinite(seconds)) return t('dashboard.etaZero');
@@ -285,6 +322,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             )}
 
+            <PresetChips presets={presets} disabled={!isIdle} onApply={onApplyPreset} />
+
             {/* Slider 1: Размер батча */}
             <div className="space-y-1.5">
               <div className="flex justify-between items-center text-xs">
@@ -372,6 +411,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-[#242636] accent-[#5865F2] disabled:opacity-50 mt-1"
               />
             </div>
+
+            <RiskMeter risk={risk} />
+
+            <AutoStopSelector
+              minutes={autoStopMinutes}
+              disabled={!isIdle}
+              onChange={onAutoStopChange}
+            />
 
             {/* Buttons Row */}
             <div className="flex items-center gap-2.5 pt-1">

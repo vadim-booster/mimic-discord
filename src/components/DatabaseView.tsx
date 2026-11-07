@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, RefreshCw, Layers, Cpu, Radio, Gamepad2 } from 'lucide-react';
+import { Search, RefreshCw, Layers, Cpu, Radio, Gamepad2, Star, Ban, Download } from 'lucide-react';
 import { useI18n } from '@/i18n/I18nProvider';
 import { tauriApi } from '@/lib/tauri';
 import type { SpoofableGameItem } from '@/types/spoofer';
@@ -8,19 +8,33 @@ interface DatabaseViewProps {
   onRefresh: () => void;
   isFetching: boolean;
   historyCount?: number;
+  favorites: string[];
+  blacklist: string[];
+  onToggleFavorite: (id: string) => void;
+  onToggleBlacklist: (id: string) => void;
 }
 
 type FilterType = 'all' | 'process' | 'rpc';
+type ExtraFilter = 'favorites' | 'blacklist' | 'adult';
+
+function csvCell(value: string): string {
+  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
 
 export const DatabaseView: React.FC<DatabaseViewProps> = ({
   onRefresh,
   isFetching,
+  favorites,
+  blacklist,
+  onToggleFavorite,
+  onToggleBlacklist,
 }) => {
   const { t, formatNumber } = useI18n();
   const [games, setGames] = useState<SpoofableGameItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [isLoadingList, setIsLoadingList] = useState(true);
+  const [extraFilter, setExtraFilter] = useState<ExtraFilter | null>(null);
 
   useEffect(() => {
     const loadGames = async () => {
@@ -45,7 +59,12 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({
     if (activeFilter === 'process' && game.method !== 'process') return false;
     if (activeFilter === 'rpc' && game.method !== 'rpc') return false;
 
-    // 2. Search term
+    // 2. Extra filter (favorites / blacklist / 18+)
+    if (extraFilter === 'favorites' && !favorites.includes(game.id)) return false;
+    if (extraFilter === 'blacklist' && !blacklist.includes(game.id)) return false;
+    if (extraFilter === 'adult' && !game.adult) return false;
+
+    // 3. Search term
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return (
@@ -54,6 +73,43 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({
       game.id.includes(term)
     );
   });
+
+  const exportCsv = () => {
+    const header = ['id', 'name', 'method', 'path', 'adult'];
+    const rows = filteredGames.map((g) =>
+      [g.id, g.name, g.method, g.rel_path ?? '', g.adult ? 'yes' : 'no'].map(csvCell).join(',')
+    );
+    const blob = new Blob(['\uFEFF' + [header.join(','), ...rows].join('\r\n')], {
+      type: 'text/csv;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mimic-games-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const extraChips: Array<{ id: ExtraFilter; label: string; count: number; icon: React.ReactNode }> = [
+    {
+      id: 'favorites',
+      label: t('database.favorites'),
+      count: favorites.length,
+      icon: <Star className="w-3 h-3" />,
+    },
+    {
+      id: 'blacklist',
+      label: t('database.blacklisted'),
+      count: blacklist.length,
+      icon: <Ban className="w-3 h-3" />,
+    },
+    {
+      id: 'adult',
+      label: '18+',
+      count: games.filter((g) => g.adult).length,
+      icon: null,
+    },
+  ];
 
   return (
     <div className="flex flex-col h-full bg-[#161722] border border-[#232535] rounded-xl p-4 gap-3 shadow-sm">
@@ -85,6 +141,16 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({
               className="w-full bg-[#1b1c28] border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#5865F2]"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={filteredGames.length === 0}
+            className="p-1.5 rounded-lg bg-[#1b1c28] border border-white/10 hover:bg-white/5 text-neutral-300 disabled:opacity-50"
+            title={t('database.exportCsv', { count: formatNumber(filteredGames.length) })}
+          >
+            <Download className="w-4 h-4" />
+          </button>
 
           <button
             type="button"
@@ -150,6 +216,26 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({
         </button>
       </div>
 
+      {/* Extra filters */}
+      <div className="flex items-center gap-2 pb-1 text-xs">
+        {extraChips.map((chip) => (
+          <button
+            key={chip.id}
+            type="button"
+            onClick={() => setExtraFilter((prev) => (prev === chip.id ? null : chip.id))}
+            className={`px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 ${
+              extraFilter === chip.id
+                ? 'bg-amber-400/15 border-amber-400/50 text-amber-200 font-semibold'
+                : 'bg-[#1b1c28] border-white/5 text-neutral-400 hover:text-white'
+            }`}
+          >
+            {chip.icon}
+            <span>{chip.label}</span>
+            <span className="font-mono text-[10px] opacity-75">({formatNumber(chip.count)})</span>
+          </button>
+        ))}
+      </div>
+
       {/* Games Table List */}
       <div className="flex-1 overflow-y-auto pr-1">
         {isLoadingList ? (
@@ -204,6 +290,29 @@ export const DatabaseView: React.FC<DatabaseViewProps> = ({
 
                 <div className="flex items-center gap-2 flex-shrink-0 text-neutral-500 font-mono text-[10px]">
                   <span>ID: {game.id}</span>
+                  <button
+                    type="button"
+                    onClick={() => onToggleFavorite(game.id)}
+                    className={`p-1 rounded hover:bg-white/5 ${
+                      favorites.includes(game.id) ? 'text-amber-300' : 'text-neutral-500 hover:text-white'
+                    }`}
+                    title={t(favorites.includes(game.id) ? 'database.unstar' : 'database.star')}
+                  >
+                    <Star
+                      className="w-3.5 h-3.5"
+                      fill={favorites.includes(game.id) ? 'currentColor' : 'none'}
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onToggleBlacklist(game.id)}
+                    className={`p-1 rounded hover:bg-white/5 ${
+                      blacklist.includes(game.id) ? 'text-red-400' : 'text-neutral-500 hover:text-white'
+                    }`}
+                    title={t(blacklist.includes(game.id) ? 'database.unban' : 'database.ban')}
+                  >
+                    <Ban className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             ))}

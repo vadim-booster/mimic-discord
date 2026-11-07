@@ -274,8 +274,14 @@ pub async fn get_games_list(state: State<'_, AppState>) -> Result<Vec<crate::dis
 
 /// Switches the language used by backend-generated log messages.
 #[tauri::command]
-pub fn set_language(language: String) {
+pub fn set_language(language: String, app: AppHandle) {
     crate::i18n::set_language(&language);
+    crate::refresh_tray_labels(&app);
+}
+
+#[tauri::command]
+pub fn set_close_to_tray(enabled: bool, state: State<'_, AppState>) {
+    state.close_to_tray.store(enabled, Ordering::SeqCst);
 }
 
 /// Opens a link in the system default browser. Only GitHub https links are allowed.

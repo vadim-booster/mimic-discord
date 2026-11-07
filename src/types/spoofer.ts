@@ -97,4 +97,6 @@ export interface SpooferConfig {
   farm_duration_secs?: number | null;
   /** Leave out 18+ games. */
   exclude_adult?: boolean;
+  /** Games that are never spoofed (the user's blacklist). */
+  exclude_game_ids?: string[];
 }

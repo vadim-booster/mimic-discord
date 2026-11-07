@@ -10,43 +10,37 @@ import { useDiscordStatus } from '@/hooks/useDiscordStatus';
 import { useSpooferEvents } from '@/hooks/useSpooferEvents';
 import { useStarPrompt } from '@/hooks/useStarPrompt';
 import type { SpooferConfig } from '@/types/spoofer';
-
-const EXCLUDE_ADULT_KEY = 'mimic.exclude_adult';
-
-function readExcludeAdult(): boolean {
-  try {
-    return localStorage.getItem(EXCLUDE_ADULT_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
+import { DEFAULT_CONFIG, loadConfig, saveConfig } from '@/lib/settingsStorage';
+import { SettingsExtras } from '@/components/SettingsExtras';
+import { SessionSummaryDialog, formatClock } from '@/components/SessionSummaryDialog';
+import { usePrefs } from '@/hooks/usePrefs';
+import { usePresets } from '@/hooks/usePresets';
+import { useAutoStop } from '@/hooks/useAutoStop';
+import { useSessionSummary } from '@/hooks/useSessionSummary';
+import { useI18n } from '@/i18n/I18nProvider';
+import { tauriApi } from '@/lib/tauri';
+import { applyZoom, notify } from '@/lib/native';
+import type { Preset } from '@/lib/presets';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [isFarmRun, setIsFarmRun] = useState(false);
-  const [config, setConfig] = useState<SpooferConfig>(() => ({
-    limit: null,
-    batch_size: 8,
-    hold_duration_secs: 15,
-    skip_previously_spoofed: true,
-    // Native OS games only by default; other categories require the beta opt-in.
-    spoof_mode: 'process_only',
-    beta_enabled: false,
-    cooldown_enabled: true,
-    cooldown_every_n_batches: 25,
-    cooldown_seconds: 30,
-    jitter_enabled: false,
-    exclude_adult: readExcludeAdult(),
-  }));
+  const [config, setConfig] = useState<SpooferConfig>(loadConfig);
 
-  // The 18+ checkbox is remembered between launches.
+  // Settings are remembered between launches.
   useEffect(() => {
-    try {
-      localStorage.setItem(EXCLUDE_ADULT_KEY, String(Boolean(config.exclude_adult)));
-    } catch {
-      // storage unavailable: the choice just lasts for this session
-    }
-  }, [config.exclude_adult]);
+    saveConfig(config);
+  }, [config]);
+
+  const resetConfig = () => setConfig({ ...DEFAULT_CONFIG });
+
+  const { t } = useI18n();
+  const { prefs, update: updatePrefs, toggleFavorite, toggleBlacklist } = usePrefs();
+  const { presets, savePreset, deletePreset } = usePresets();
+
+  // A preset only replaces the run settings; beta stays as the user set it.
+  const applyPreset = (preset: Preset) =>
+    setConfig((prev) => ({ ...prev, ...preset.settings }));
 
   const {
     isRunning: isDiscordRunning,
@@ -76,9 +70,47 @@ export const App: React.FC = () => {
     () => ({
       ...config,
       spoof_mode: config.beta_enabled ? config.spoof_mode : 'process_only',
+      exclude_game_ids: prefs.blacklist,
     }),
-    [config]
+    [config, prefs.blacklist]
   );
+
+  const { summary, dismiss: dismissSummary, markTimerStop } = useSessionSummary(
+    status,
+    tickData,
+    isFarmRun
+  );
+
+  // Auto-stop timer for the main mode (the farm tab has its own timer).
+  useAutoStop(status, prefs.auto_stop_minutes, !isFarmRun, () => {
+    markTimerStop();
+    actions.addLog('info', t('logs.autoStopped', { count: prefs.auto_stop_minutes }));
+    actions.stop();
+  });
+
+  // Desktop notification when a run ends and the window is not in front.
+  useEffect(() => {
+    if (!summary || !prefs.notify_on_finish || summary.outcome === 'stopped') return;
+    if (document.hasFocus()) return;
+    notify(
+      t('notify.title', { result: t(`summary.${summary.outcome}`) }),
+      t('notify.body', {
+        succeeded: summary.succeeded,
+        failed: summary.failed,
+        duration: formatClock(summary.durationSecs),
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary]);
+
+  // Backend needs to know whether the close button hides the window to the tray.
+  useEffect(() => {
+    tauriApi.setCloseToTray(prefs.close_to_tray).catch(() => undefined);
+  }, [prefs.close_to_tray]);
+
+  useEffect(() => {
+    applyZoom(prefs.ui_scale);
+  }, [prefs.ui_scale]);
 
   // Load database on start if empty
   useEffect(() => {
@@ -131,6 +163,10 @@ export const App: React.FC = () => {
               config={effectiveConfig}
               onConfigChange={setConfig}
               onOpenSettings={() => setActiveTab('settings')}
+              autoStopMinutes={prefs.auto_stop_minutes}
+              onAutoStopChange={(minutes) => updatePrefs({ auto_stop_minutes: minutes })}
+              presets={presets}
+              onApplyPreset={applyPreset}
               onStart={handleStart}
               onPause={actions.pause}
               onResume={actions.resume}
@@ -145,6 +181,8 @@ export const App: React.FC = () => {
               isFarmRun={isFarmRun}
               isBetaEnabled={Boolean(config.beta_enabled)}
               excludeAdult={Boolean(config.exclude_adult)}
+              blacklist={prefs.blacklist}
+              favorites={prefs.favorites}
               isFetching={isFetchingDatabase}
               onStart={handleStartFarm}
               onStop={actions.stop}
@@ -156,6 +194,10 @@ export const App: React.FC = () => {
               onRefresh={() => actions.fetchGames(true)}
               isFetching={isFetchingDatabase}
               historyCount={historyCount}
+              favorites={prefs.favorites}
+              blacklist={prefs.blacklist}
+              onToggleFavorite={toggleFavorite}
+              onToggleBlacklist={toggleBlacklist}
             />
           )}
 
@@ -167,16 +209,30 @@ export const App: React.FC = () => {
             <SettingsView
               config={config}
               onConfigChange={setConfig}
+              onResetConfig={resetConfig}
               historyCount={historyCount}
               onClearHistory={actions.clearHistory}
               onExportHistory={actions.exportHistory}
               onImportHistory={actions.importHistory}
               isDiscordRunning={isDiscordRunning}
               onRecheckDiscord={recheckDiscord}
+              extras={
+                <SettingsExtras
+                  prefs={prefs}
+                  onPrefsChange={updatePrefs}
+                  onToggleBlacklist={toggleBlacklist}
+                  presets={presets}
+                  onSavePreset={(name) => savePreset(name, config)}
+                  onDeletePreset={deletePreset}
+                  onApplyPreset={applyPreset}
+                />
+              }
             />
           )}
         </div>
       </main>
+
+      <SessionSummaryDialog summary={summary} onClose={dismissSummary} />
 
       <GithubStarDialog
         open={starPrompt.isOpen}

@@ -108,6 +108,9 @@ pub struct SpooferConfig {
     /// Leaves out 18+ games (Discord "Erotic" theme or ESRB Adults Only).
     #[serde(default)]
     pub exclude_adult: bool,
+    /// Games that are never spoofed (the user's blacklist).
+    #[serde(default)]
+    pub exclude_game_ids: Vec<String>,
 }
 
 pub struct AppState {
@@ -118,6 +121,10 @@ pub struct AppState {
     pub resume_notify: Arc<Notify>,
     pub active_pids: Arc<Mutex<Vec<u32>>>,
     pub current_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// The close button hides the window to the tray instead of quitting.
+    pub close_to_tray: Arc<AtomicBool>,
+    /// Set once the tray icon exists, so the window is never hidden without a way back.
+    pub tray_available: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -130,6 +137,8 @@ impl AppState {
             resume_notify: Arc::new(Notify::new()),
             active_pids: Arc::new(Mutex::new(Vec::new())),
             current_task: Arc::new(Mutex::new(None)),
+            close_to_tray: Arc::new(AtomicBool::new(false)),
+            tray_available: Arc::new(AtomicBool::new(false)),
         }
     }
 }

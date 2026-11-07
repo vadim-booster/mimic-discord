@@ -15,6 +15,7 @@ import {
   FlaskConical,
   AlertTriangle,
   Lock,
+  RotateCcw,
 } from 'lucide-react';
 import { useI18n } from '@/i18n/I18nProvider';
 import type { SpooferConfig, SpoofMode } from '@/types/spoofer';
@@ -22,23 +23,28 @@ import type { SpooferConfig, SpoofMode } from '@/types/spoofer';
 interface SettingsViewProps {
   config: SpooferConfig;
   onConfigChange: (updater: (prev: SpooferConfig) => SpooferConfig) => void;
+  onResetConfig: () => void;
   historyCount: number;
   onClearHistory: () => void;
   onExportHistory?: () => void;
   onImportHistory?: (jsonText: string) => Promise<number>;
   isDiscordRunning: boolean | null;
   onRecheckDiscord: () => void;
+  /** Extra settings cards (notifications, tray, presets, blacklist...) shown above the reset card. */
+  extras?: React.ReactNode;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   config,
   onConfigChange,
+  onResetConfig,
   historyCount,
   onClearHistory,
   onExportHistory,
   onImportHistory,
   isDiscordRunning,
   onRecheckDiscord,
+  extras,
 }) => {
   const { t, language, setLanguage, formatNumber } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -524,6 +530,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               className="hidden"
             />
           </div>
+        </div>
+
+        {extras}
+
+        {/* Section 7: Reset settings to defaults */}
+        <div className="flex items-center justify-between p-3.5 rounded-lg bg-[#1b1c28] border border-white/5">
+          <div className="pr-4">
+            <div className="text-xs font-semibold text-white">
+              {t('settings.resetTitle')}
+            </div>
+            <div className="text-[11px] text-neutral-400 mt-0.5">
+              {t('settings.resetDesc')}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onResetConfig}
+            className="p-2 rounded-lg bg-[#242636] hover:bg-white/5 text-neutral-200 text-xs flex items-center gap-1.5 border border-white/10 transition-all flex-shrink-0"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-[#5865F2]" />
+            <span>{t('settings.reset')}</span>
+          </button>
         </div>
       </div>
     </div>

@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Timer, Plus, X, Gamepad2 } from 'lucide-react';
+import { Search, Timer, Plus, X, Gamepad2, Star } from 'lucide-react';
 import { useI18n } from '@/i18n/I18nProvider';
 import { tauriApi } from '@/lib/tauri';
 import type { SpoofableGameItem, SpooferStatus, SpooferTickEvent } from '@/types/spoofer';
+import { RiskMeter } from '@/components/RiskMeter';
+import { estimateRisk } from '@/lib/risk';
 
 /** Same limit as the backend, which runs the whole farm as one batch. */
 const MAX_FARM_GAMES = 20;
@@ -65,6 +67,8 @@ interface FarmViewProps {
   isFarmRun: boolean;
   isBetaEnabled: boolean;
   excludeAdult: boolean;
+  blacklist: string[];
+  favorites: string[];
   isFetching: boolean;
   onStart: (gameIds: string[], durationSecs: number | null) => void;
   onStop: () => void;
@@ -92,6 +96,8 @@ export const FarmView: React.FC<FarmViewProps> = ({
   isFarmRun,
   isBetaEnabled,
   excludeAdult,
+  blacklist,
+  favorites,
   isFetching,
   onStart,
   onStop,
@@ -125,9 +131,12 @@ export const FarmView: React.FC<FarmViewProps> = ({
   const availableGames = useMemo(
     () =>
       games.filter(
-        (g) => (isBetaEnabled || g.method === 'process') && !(excludeAdult && g.adult)
+        (g) =>
+          (isBetaEnabled || g.method === 'process') &&
+          !(excludeAdult && g.adult) &&
+          !blacklist.includes(g.id)
       ),
-    [games, isBetaEnabled, excludeAdult]
+    [games, isBetaEnabled, excludeAdult, blacklist]
   );
 
   const selectedGames = useMemo(
@@ -158,6 +167,35 @@ export const FarmView: React.FC<FarmViewProps> = ({
   }, [searchTerm, availableGames, selectedIds]);
 
   const isFull = selectedGames.length >= MAX_FARM_GAMES;
+
+  // Starred games that can still be added (they must exist, not be picked yet, and not share an exe).
+  const addableFavorites = useMemo(() => {
+    const taken = new Set(selectedIds);
+    const exes = new Set(usedExes);
+    const result: string[] = [];
+    for (const id of favorites) {
+      const game = availableGames.find((g) => g.id === id);
+      if (!game || taken.has(id)) continue;
+      const exe = exeBasename(game);
+      if (exe && exes.has(exe)) continue;
+      if (selectedIds.length + result.length >= MAX_FARM_GAMES) break;
+      if (exe) exes.add(exe);
+      result.push(id);
+    }
+    return result;
+  }, [favorites, availableGames, selectedIds, usedExes]);
+
+  // Farming holds a small fixed set for a long time instead of rotating through batches.
+  const farmRisk = useMemo(
+    () =>
+      estimateRisk({
+        batchSize: selectedGames.length,
+        holdSecs: durationSecs ?? 8 * 3600,
+        totalGames: selectedGames.length,
+        cooldownEnabled: true,
+      }),
+    [selectedGames.length, durationSecs]
+  );
   const activeIds = new Set(tickData.active_batch.map((g) => g.id));
 
   const durationLabel = (preset: number | null) =>
@@ -233,6 +271,8 @@ export const FarmView: React.FC<FarmViewProps> = ({
           )}
         </div>
 
+        <RiskMeter risk={farmRisk} />
+
         {!isIdle && !isFarmRun && (
           <div className="text-[11px] text-amber-400">{t('farm.busy')}</div>
         )}
@@ -243,9 +283,21 @@ export const FarmView: React.FC<FarmViewProps> = ({
         <div className="bg-[#161722] border border-[#232535] rounded-xl p-4 flex flex-col shadow-sm min-h-0 overflow-hidden">
           <div className="flex items-center justify-between pb-2 border-b border-white/5 flex-shrink-0">
             <h3 className="text-sm font-semibold text-white">{t('farm.selected')}</h3>
-            <span className="text-[11px] font-mono text-neutral-400">
-              {selectedGames.length}/{MAX_FARM_GAMES}
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!isIdle || addableFavorites.length === 0}
+                onClick={() => setSelectedIds((prev) => [...prev, ...addableFavorites])}
+                className="px-2 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-[10px] text-amber-200 hover:bg-amber-400/20 disabled:opacity-40 flex items-center gap-1 transition-all"
+                title={t('farm.addFavoritesHint')}
+              >
+                <Star className="w-3 h-3" />
+                {t('farm.addFavorites', { count: addableFavorites.length })}
+              </button>
+              <span className="text-[11px] font-mono text-neutral-400">
+                {selectedGames.length}/{MAX_FARM_GAMES}
+              </span>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto pr-1 mt-2 space-y-1.5 min-h-0">
